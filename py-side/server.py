@@ -3,7 +3,7 @@ import os
 import tensorflow as tf
 from tensorflow.keras import layers  # type: ignore
 from tensorflow.keras import Model  # type: ignore
-from flask import Flask, request
+from flask import Flask, request, abort
 import cv2
 import json
 import numpy as np
@@ -28,6 +28,33 @@ import os
 import sys
 from dotenv import load_dotenv
 
+import sqlite3
+
+
+def CreateTable():
+    ''' Create status table, with 1 row of of 'status' '''
+    with sqlite3.connect('status.db') as conn:
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS status (status text)''')
+        c.execute('''INSERT INTO status VALUES ('AWAY')''')
+        conn.commit()
+
+
+def UpdateStatus(status):
+    ''' Update status table '''
+    with sqlite3.connect('status.db') as conn:
+        c = conn.cursor()
+        c.execute('''UPDATE status SET status = ?''', (status,))
+        conn.commit()
+
+
+def GetStatus():
+    ''' Get status from status table '''
+    with sqlite3.connect('status.db') as conn:
+        c = conn.cursor()
+        c.execute('''SELECT status FROM status''')
+        status = c.fetchone()[0]
+        return status
 
 
 # !Face Recognition 🌝
@@ -75,6 +102,7 @@ def verify(image_path, identity, database, model):
         match = False
     return dist, match
 
+
 # !LINE BOT 🤖
 # get channel_secret and channel_access_token from your environment variable
 load_dotenv()
@@ -87,31 +115,50 @@ parser = WebhookParser(channel_secret)
 
 @app.route("/callback", methods=['POST'])
 def callback():
-    signature = request.headers['X-Line-Signature']
+    with sqlite3.connect('status.db') as conn:
+        c = conn.cursor()
+        signature = request.headers['X-Line-Signature']
 
-    # get request body as text
-    body = request.get_data(as_text=True)
-    app.logger.info("Request body: " + body)
+        # get request body as text
+        body = request.get_data(as_text=True)
+        app.logger.info("Request body: " + body)
 
-    # parse webhook body
-    try:
-        events = parser.parse(body, signature)
-    except InvalidSignatureError:
-        abort(400)
+        # parse webhook body
+        try:
+            events = parser.parse(body, signature)
+        except InvalidSignatureError:
+            abort(400)
 
-    # if event is MessageEvent and message is TextMessage, then echo text
-    for event in events:
-        print(event)
-        if isinstance(event, MessageEvent):
-            if isinstance(event.message, TextMessage):
-                line_bot_api.reply_message(
-                    event.reply_token,
-                    TextSendMessage(text=event.message.text)
-                )
-        if isinstance(event, BeaconEvent):
-            print('Got beacon event')
+        # if event is MessageEvent and message is TextMessage, then echo text
+        for event in events:
+            print(event)
+            if isinstance(event, MessageEvent):
+                if isinstance(event.message, TextMessage):
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        TextSendMessage(text=event.message.text)
+                    )
+            if isinstance(event, BeaconEvent):
+                print('Got beacon event')
 
-    return 'OK'
+                # If the user is entering the beacon range, update the status to 'HOME'
+                if event.beacon.type == 'enter':
+                    print('enter')
+                    UpdateStatus('HOME')
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        TextSendMessage(text='Welcome home!'))
+
+                        
+                # # If the user is leaving the beacon range, update the status to 'AWAY'
+                # elif event.beacon.type == 'leave':
+                #     print('leave')
+                #     UpdateStatus('AWAY')
+                #     line_bot_api.reply_message(
+                #         event.reply_token,
+                #         TextSendMessage(text='Bye bye!'))
+
+        return 'OK'
 
 
 @app.route('/register', methods=['POST'])
@@ -169,6 +216,13 @@ def change():
     return json.dumps({"identity": str(identity)})
 
 
+@app.route('/status', methods=['GET'])
+def status():
+    status = GetStatus()
+    return json.dumps({"status": status})
+
+
+CreateTable()
 ngrok.set_auth_token(os.environ['NGROK_AUTH_TOKEN'])
 http_tunnel = ngrok.connect(5000)
 endpoint_url = http_tunnel.public_url.replace('http://', 'https://')

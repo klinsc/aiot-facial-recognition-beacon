@@ -149,7 +149,8 @@ def callback():
                         event.reply_token,
                         TextSendMessage(text='Welcome home!'))
 
-                        
+                    # Add an interval to check if the user is still at home, every 10 seconds
+
                 # # If the user is leaving the beacon range, update the status to 'AWAY'
                 # elif event.beacon.type == 'leave':
                 #     print('leave')
@@ -184,6 +185,7 @@ def who_is_it(image_path, database, model):
     print(image_path)
     encoding = img_to_encoding(image_path, model)
     min_dist = 1000
+    identity = None
     # Loop over the database dictionary's names and encodings.
     for (name, db_enc) in database.items():
         dist = np.linalg.norm(encoding-db_enc)
@@ -200,20 +202,23 @@ def who_is_it(image_path, database, model):
 
 @app.route('/verify', methods=['POST'])
 def change():
-    img_data = request.get_json()['image64']
-    img_name = str(int(datetime.timestamp(datetime.now())))
-    with open('images/'+img_name+'.jpg', "wb") as fh:
-        fh.write(base64.b64decode(img_data[22:]))
-    path = 'images/'+img_name+'.jpg'
-    global sess
-    global graph
-    with graph.as_default():
-        set_session(sess)
-        min_dist, identity = who_is_it(path, database, model)
-    os.remove(path)
-    if min_dist > 5:
-        return json.dumps({"identity": 0})
-    return json.dumps({"identity": str(identity)})
+    if GetStatus() == 'HOME':
+        img_data = request.get_json()['image64']
+        img_name = str(int(datetime.timestamp(datetime.now())))
+        with open('images/'+img_name+'.jpg', "wb") as fh:
+            fh.write(base64.b64decode(img_data[22:]))
+        path = 'images/'+img_name+'.jpg'
+        global sess
+        global graph
+        with graph.as_default():
+            set_session(sess)
+            min_dist, identity = who_is_it(path, database, model)
+        os.remove(path)
+        if min_dist > 5:
+            return json.dumps({"identity": 0})
+        return json.dumps({"identity": str(identity)})
+    else:
+        return json.dumps({"identity": str(0)})
 
 
 @app.route('/status', methods=['GET'])
